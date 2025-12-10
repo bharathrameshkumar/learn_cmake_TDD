@@ -22,6 +22,7 @@ typedef struct {
     // Internal state
     float integral;     // Accumulated integral
     float prevError;    // Previous error for derivative
+    bool firstCall;     // Flag to prevent derivative kick on first call
     
     // Anti-windup
     float integralMax;  // Maximum integral value

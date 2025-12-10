@@ -1,3 +1,10 @@
+/**
+ * @file pid.c
+ * @brief PID Controller Implementation
+ * 
+ * Motor control PID with anti-windup and proper derivative handling
+ */
+
 #include "pid.h"
 #include <stddef.h>
 
@@ -22,6 +29,7 @@ void PID_Init(PID_Controller_t* pid,
     // Initialize internal state
     pid->integral = 0.0f;
     pid->prevError = 0.0f;
+    pid->firstCall = true;  // Prevent derivative kick on first call
     
     // Default integral limits (can be changed with PID_SetIntegralLimits)
     pid->integralMax = outMax;
@@ -37,20 +45,35 @@ float PID_Compute(PID_Controller_t* pid,
     // Calculate error
     float error = setpoint - measurement;
     
-    // Proportional term
+    // Proportional term (always active)
     float proportional = pid->Kp * error;
     
-    // Integral term with anti-windup
+    // Integral term - always accumulates (even on first call)
+    // Integration represents area under the curve, starts accumulating immediately
     pid->integral += error * dt;
-    pid->integral = clamp(pid->integral, pid->integralMin, pid->integralMax);
-    float integral = pid->Ki * pid->integral;
     
-    // Derivative term
-    float derivative = pid->Kd * (error - pid->prevError) / dt;
+    // Apply anti-windup limits to the integral OUTPUT, not the raw integral
+    float integralOutput = pid->Ki * pid->integral;
+    integralOutput = clamp(integralOutput, pid->integralMin, pid->integralMax);
+    
+    // Back-calculate the clamped integral to prevent further windup
+    if (pid->Ki != 0.0f) {
+        pid->integral = integralOutput / pid->Ki;
+    }
+    
+    // Derivative term - skip on first call to prevent derivative kick
+    // Derivative needs two samples to compute rate of change
+    float derivative = 0.0f;
+    if (!pid->firstCall) {
+        derivative = pid->Kd * (error - pid->prevError) / dt;
+    }
+    
+    // Update state for next call
     pid->prevError = error;
+    pid->firstCall = false;
     
     // Calculate total output
-    float output = proportional + integral + derivative;
+    float output = proportional + integralOutput + derivative;
     
     // Clamp output to limits
     output = clamp(output, pid->outputMin, pid->outputMax);
@@ -63,6 +86,7 @@ void PID_Reset(PID_Controller_t* pid) {
     
     pid->integral = 0.0f;
     pid->prevError = 0.0f;
+    pid->firstCall = true;  // Reset the first call flag
 }
 
 void PID_SetIntegralLimits(PID_Controller_t* pid, float min, float max) {
@@ -71,6 +95,10 @@ void PID_SetIntegralLimits(PID_Controller_t* pid, float min, float max) {
     pid->integralMin = min;
     pid->integralMax = max;
     
-    // Clamp current integral to new limits
-    pid->integral = clamp(pid->integral, min, max);
+    // Clamp current integral output to new limits
+    if (pid->Ki != 0.0f) {
+        float integralOutput = pid->Ki * pid->integral;
+        integralOutput = clamp(integralOutput, min, max);
+        pid->integral = integralOutput / pid->Ki;
+    }
 }
